@@ -55,7 +55,6 @@ local function get_json(term, bufnr, stopline, queryline)
     local json_lines =
       api.nvim_buf_get_lines(bufnr, start_line, end_line - 1, false)
     for _, v in ipairs(json_lines) do
-      print(v)
       json_string = json_string .. v
     end
 
@@ -96,7 +95,8 @@ local function run()
   local parsed_url = parse_url(vim.fn.getline("."))
   local last_query_line_number = vim.fn.line(".")
 
-  local next_query = vim.fn.search("GET", "n", vim.fn.line("$"))
+  local next_query =
+    vim.fn.search("GET\\|POST\\|PUT\\|PATCH\\|DELETE", "n", vim.fn.line("$"))
   next_query = next_query > 1 and next_query or vim.fn.line("$")
 
   local query = get_json("QUERY", bufnr, next_query, last_query_line_number)
