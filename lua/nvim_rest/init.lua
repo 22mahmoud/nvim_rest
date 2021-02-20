@@ -1,5 +1,5 @@
 require("plenary.reload").reload_module("nvim_rest")
-local curl = require("plenary.curl")
+local _curl = require("plenary.curl")
 local api = vim.api
 local utils = require("nvim_rest.utils")
 
@@ -24,78 +24,105 @@ local function get_or_create_buf()
     return existing_bufnr
   end
 
-  local new_bufnr = api.nvim_create_buf(false, "nomodified")
+  local new_bufnr = api.nvim_create_buf(false, "nomodeline")
   api.nvim_buf_set_name(new_bufnr, tmp_name)
   api.nvim_buf_set_option(new_bufnr, "ft", "json")
 
   return new_bufnr
 end
 
-local function get(opts)
-  local url = opts.url
-  local query = opts.query
+local function parse_url(str)
+  local parsed = utils.split(str, " ")
+  return {method = parsed[1], url = parsed[2]}
+end
 
-  local res =
-    curl.get(
-    {
-      url = url,
-      query = query
-    }
+local function go_to_line(bufnr, line)
+  api.nvim_buf_call(
+    bufnr,
+    function()
+      vim.fn.cursor(line, 1)
+    end
   )
-  local bufnr = get_or_create_buf()
+end
+
+local function get_json(term, bufnr, stopline, queryline)
+  local json = nil
+  local start_line = vim.fn.search(term .. " {", "", stopline)
+  local end_line = vim.fn.search("}", "n", stopline)
+
+  if (start_line > 0) then
+    local json_string = ""
+    local json_lines =
+      api.nvim_buf_get_lines(bufnr, start_line, end_line - 1, false)
+    for _, v in ipairs(json_lines) do
+      print(v)
+      json_string = json_string .. v
+    end
+
+    json_string = "{" .. json_string .. "}"
+
+    json = vim.fn.json_decode(json_string)
+  end
+
+  go_to_line(bufnr, queryline)
+  return json
+end
+
+local function curl(opts)
+  local res = _curl[opts.method](opts)
+  local res_bufnr = get_or_create_buf()
 
   -- add the curl result into the created buffer
   for l in utils.magiclines(res.body) do
-    local line_count = api.nvim_buf_line_count(bufnr) - 1
-    api.nvim_buf_set_lines(bufnr, line_count, line_count, false, {l})
+    local line_count = api.nvim_buf_line_count(res_bufnr) - 1
+    api.nvim_buf_set_lines(res_bufnr, line_count, line_count, false, {l})
   end
 
   -- only open new split if the buffer not loaded into the current window
-  if vim.fn.bufwinnr(bufnr) == -1 then
-    vim.cmd([[vert sb]] .. bufnr)
+  if vim.fn.bufwinnr(res_bufnr) == -1 then
+    vim.cmd([[vert sb]] .. res_bufnr)
   end
+
+  api.nvim_buf_call(
+    res_bufnr,
+    function()
+      vim.fn.cursor(1, 1)
+    end
+  )
 end
 
-local function start()
-  local line = utils.split(vim.fn.getline("."), " ")
-  local method, url = line[1], line[2]
+local function run()
+  local bufnr = api.nvim_win_get_buf(0)
+  local parsed_url = parse_url(vim.fn.getline("."))
+  local last_query_line_number = vim.fn.line(".")
 
-  if method == "GET" then
-    local bufnr = api.nvim_win_get_buf(0)
-    local next_query = vim.fn.search("GET", "n", vim.fn.line("$"))
-    print(next_query)
-    local start_query_line_number =
-      vim.fn.search("{", "n", next_query > 1 and next_query or vim.fn.line("$"))
-    local end_query_line_number =
-      vim.fn.search("}", "n", next_query > 1 and next_query or vim.fn.line("$"))
-    local query = nil
-    if (start_query_line_number > 0) then
-      local query_string = ""
-      local query_lines =
-        api.nvim_buf_get_lines(
-        bufnr,
-        start_query_line_number - 1,
-        end_query_line_number,
-        false
-      )
-      for _, v in ipairs(query_lines) do
-        query_string = query_string .. v
-      end
+  local next_query = vim.fn.search("GET", "n", vim.fn.line("$"))
+  next_query = next_query > 1 and next_query or vim.fn.line("$")
 
-      query = vim.fn.json_decode(query_string)
-    end
-    get({url = url, query = query})
-  end
+  local query = get_json("QUERY", bufnr, next_query, last_query_line_number)
+  local headers = get_json("HEADERS", bufnr, next_query, last_query_line_number)
+  local body = get_json("BODY", bufnr, next_query, last_query_line_number)
+
+  curl(
+    {
+      method = parsed_url.method:lower(),
+      url = parsed_url.url,
+      query = query,
+      headers = headers,
+      body = body
+    }
+  )
+
+  go_to_line(bufnr, last_query_line_number)
 end
 
 api.nvim_set_keymap(
   "n",
   ",w",
-  ":lua require('nvim_rest').start()<cr>",
+  ":lua require('nvim_rest').run()<cr>",
   {noremap = true, silent = true}
 )
 
 return {
-  get = get,
-  start = start
+  run = run
 }

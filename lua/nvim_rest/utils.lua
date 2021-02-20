@@ -1,5 +1,9 @@
 local M = {}
 
+function string.starts(String, Start)
+  return string.sub(String, 1, string.len(Start)) == Start
+end
+
 M.magiclines = function(s)
   if s:sub(-1) ~= "\n" then
     s = s .. "\n"
